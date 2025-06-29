@@ -5,39 +5,51 @@ import pandas as pd
 from geopy.distance import geodesic
 from io import BytesIO
 
-# Setup
 st.set_page_config(page_title="📍 Lead Proximity Sorter", layout="centered")
 st.title("📍 Lead Proximity Sorter")
 st.markdown("""
 Upload your **CSV or Excel** file and this app will:
 - Reorder rows based on geographic proximity
+- Leave un-sortable addresses at the bottom
 - Preview the sorted list
 - Let you download the optimized result
 
-**Required columns:** `LATITUDE` and `LONGITUDE`
+**Must contain:** `LATITUDE` and `LONGITUDE` (or similar variants)
 """)
 
-# File uploader
 uploaded_file = st.file_uploader("📁 Upload your file", type=["csv", "xlsx"])
 
-# Core proximity sort logic
-def sort_by_proximity(df):
-    df_clean = df.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
-    df_clean[['LATITUDE', 'LONGITUDE']] = df_clean[['LATITUDE', 'LONGITUDE']].astype(float)
+def standardize_columns(df):
+    df.columns = df.columns.str.upper().str.strip()
+    column_map = {
+        'LAT': 'LATITUDE',
+        'LNG': 'LONGITUDE',
+        'LONG': 'LONGITUDE',
+        'LON': 'LONGITUDE'
+    }
+    df.rename(columns=column_map, inplace=True)
+    return df
 
-    visited = [False] * len(df_clean)
+def sort_by_proximity(df):
+    df_valid = df.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
+    df_valid[['LATITUDE', 'LONGITUDE']] = df_valid[['LATITUDE', 'LONGITUDE']].astype(float)
+
+    visited = [False] * len(df_valid)
     order = []
 
     current_index = 0
     visited[current_index] = True
     order.append(current_index)
 
-    for _ in range(len(df_clean) - 1):
-        current_location = (df_clean.iloc[current_index]['LATITUDE'], df_clean.iloc[current_index]['LONGITUDE'])
+    for _ in range(len(df_valid) - 1):
+        current_location = (
+            df_valid.iloc[current_index]['LATITUDE'],
+            df_valid.iloc[current_index]['LONGITUDE']
+        )
         min_dist = float('inf')
         next_index = None
 
-        for i, row in df_clean.iterrows():
+        for i, row in df_valid.iterrows():
             if not visited[i]:
                 target_location = (row['LATITUDE'], row['LONGITUDE'])
                 dist = geodesic(current_location, target_location).meters
@@ -50,11 +62,15 @@ def sort_by_proximity(df):
             order.append(next_index)
             current_index = next_index
 
-    df_sorted = df_clean.iloc[order].reset_index(drop=True)
-    df_sorted.insert(0, 'SortOrder', range(1, len(df_sorted) + 1))
-    return df_sorted
+    sorted_valid = df_valid.iloc[order].copy()
+    sorted_valid.insert(0, 'SortOrder', range(1, len(sorted_valid) + 1))
 
-# File processing
+    df_missing = df[df['LATITUDE'].isna() | df['LONGITUDE'].isna()].copy()
+    df_missing.insert(0, 'SortOrder', ['Unsorted'] * len(df_missing))
+
+    final = pd.concat([sorted_valid, df_missing], ignore_index=True)
+    return final
+
 if uploaded_file:
     file_ext = uploaded_file.name.split(".")[-1].lower()
     try:
@@ -67,7 +83,7 @@ if uploaded_file:
             st.error("❌ Uploaded file is empty or unreadable.")
             st.stop()
 
-        st.success(f"✅ Uploaded: {uploaded_file.name}")
+        df = standardize_columns(df)
 
         if 'LATITUDE' in df.columns and 'LONGITUDE' in df.columns:
             sorted_df = sort_by_proximity(df)
@@ -87,7 +103,7 @@ if uploaded_file:
                 mime="text/csv"
             )
         else:
-            st.error("❌ Columns `LATITUDE` and `LONGITUDE` are required but not found.")
+            st.error("❌ No `LATITUDE` and `LONGITUDE` fields found. Please check your file headers.")
 
     except Exception as e:
         st.error(f"❌ Error reading file: {str(e)}")
