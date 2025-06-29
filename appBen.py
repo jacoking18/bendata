@@ -5,34 +5,29 @@ import pandas as pd
 from geopy.distance import geodesic
 from io import BytesIO
 
-# App config
-st.set_page_config(page_title="Proximity Sorter", layout="centered")
-
-# Title and instructions
+# Setup
+st.set_page_config(page_title="📍 Lead Proximity Sorter", layout="centered")
 st.title("📍 Lead Proximity Sorter")
 st.markdown("""
-This app lets you upload a lead file (CSV or Excel) and reorders the addresses by travel proximity using latitude/longitude.
+Upload your **CSV or Excel** file and this app will:
+- Reorder rows based on geographic proximity
+- Preview the sorted list
+- Let you download the optimized result
 
-**Required columns:**  
-- `LATITUDE`  
-- `LONGITUDE`
+**Required columns:** `LATITUDE` and `LONGITUDE`
 """)
 
 # File uploader
-uploaded_file = st.file_uploader("📁 Upload your CSV or Excel file", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("📁 Upload your file", type=["csv", "xlsx"])
 
+# Core proximity sort logic
 def sort_by_proximity(df):
-    # Drop rows missing required coordinates
     df_clean = df.dropna(subset=['LATITUDE', 'LONGITUDE']).copy()
-
-    # Convert coordinates to float
     df_clean[['LATITUDE', 'LONGITUDE']] = df_clean[['LATITUDE', 'LONGITUDE']].astype(float)
 
-    # Setup tracking
     visited = [False] * len(df_clean)
     order = []
 
-    # Start from the first row
     current_index = 0
     visited[current_index] = True
     order.append(current_index)
@@ -55,30 +50,31 @@ def sort_by_proximity(df):
             order.append(next_index)
             current_index = next_index
 
-    # Return sorted DataFrame
     df_sorted = df_clean.iloc[order].reset_index(drop=True)
     df_sorted.insert(0, 'SortOrder', range(1, len(df_sorted) + 1))
     return df_sorted
 
-# Main app logic
+# File processing
 if uploaded_file:
-    file_ext = uploaded_file.name.split(".")[-1]
-
+    file_ext = uploaded_file.name.split(".")[-1].lower()
     try:
         if file_ext == "csv":
-            df = pd.read_csv(uploaded_file)
+            df = pd.read_csv(uploaded_file, on_bad_lines='skip', engine='python', skip_blank_lines=True)
         else:
-            df = pd.read_excel(uploaded_file)
+            df = pd.read_excel(uploaded_file, engine='openpyxl')
 
-        st.success(f"✅ File uploaded: {uploaded_file.name}")
+        if df.empty:
+            st.error("❌ Uploaded file is empty or unreadable.")
+            st.stop()
+
+        st.success(f"✅ Uploaded: {uploaded_file.name}")
 
         if 'LATITUDE' in df.columns and 'LONGITUDE' in df.columns:
             sorted_df = sort_by_proximity(df)
 
-            st.subheader("📊 Preview Sorted Leads")
+            st.subheader("📊 Sorted Preview (First 25 Rows)")
             st.dataframe(sorted_df.head(25), use_container_width=True)
 
-            # Download logic
             def convert_df_to_csv(df):
                 buffer = BytesIO()
                 df.to_csv(buffer, index=False)
@@ -91,7 +87,7 @@ if uploaded_file:
                 mime="text/csv"
             )
         else:
-            st.error("❌ The file is missing required columns: `LATITUDE` and `LONGITUDE`.")
+            st.error("❌ Columns `LATITUDE` and `LONGITUDE` are required but not found.")
 
     except Exception as e:
         st.error(f"❌ Error reading file: {str(e)}")
